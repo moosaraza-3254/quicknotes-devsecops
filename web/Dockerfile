@@ -1,5 +1,5 @@
 # Stage 1: Install production dependencies
-FROM node:22.14.0-alpine3.21 AS builder
+FROM node:25.2.1-alpine3.21 AS builder
 
 WORKDIR /app
 
@@ -7,7 +7,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 # Stage 2: Minimal hardened runtime image
-FROM node:22.14.0-alpine3.21
+FROM node:25.2.1-alpine3.21
 
 ENV NODE_ENV=production
 WORKDIR /app
