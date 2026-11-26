@@ -1,0 +1,14 @@
+{
+  "name": "quicknotes-devsecops",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "lint": "eslint api/src api/tests web/src web/public web/tests",
+    "format:check": "prettier --check \"api/**/*.{js,json}\" \"web/**/*.{js,html,css,json}\" \"*.json\"",
+    "format:write": "prettier --write \"api/**/*.{js,json}\" \"web/**/*.{js,html,css,json}\" \"*.json\""
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3"
+  }
+}
