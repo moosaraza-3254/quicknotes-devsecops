@@ -13,16 +13,14 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 RUN apk upgrade --no-cache \
-    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
-    && addgroup -g 1001 -S appgroup \
-    && adduser -u 1000 -S appuser -G appgroup
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
 COPY public ./public
 
-RUN chown -R appuser:appgroup /app
+RUN chown -R node:node /app
 
 USER 1000
 
