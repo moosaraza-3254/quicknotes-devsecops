@@ -333,8 +333,14 @@ jobs:
           ALB_DNS: ${{ secrets.ALB_DNS }}
         run: |
           set -e
-          echo "Waiting 15s for ALB target health checks..."
-          sleep 15
+          echo "Waiting up to 90s for ALB target health checks..."
+          for i in $(seq 1 18); do
+            if curl -fsS "http://${ALB_DNS}/health" > /dev/null 2>&1; then
+              echo "ALB healthy after $((i * 5))s"
+              break
+            fi
+            sleep 5
+          done
           curl -fsS "http://${ALB_DNS}/health"
           echo ""
           curl -fsS "http://${ALB_DNS}/api/health"
