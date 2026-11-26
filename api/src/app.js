@@ -4,7 +4,7 @@ const { pool } = require('./db');
 const app = express();
 app.use(express.json());
 
-app.get('/health', async (_req, res) => {
+app.get(['/health', '/api/health'], async (_req, res) => {
   try {
     await pool.query('SELECT 1');
     res.status(200).json({ status: 'ok', service: 'api', db: 'connected' });
