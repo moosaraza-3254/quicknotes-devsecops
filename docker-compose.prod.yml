@@ -1,0 +1,45 @@
+services:
+  api:
+    image: ${ECR_REGISTRY}/quicknotes-api:${IMAGE_TAG}
+    restart: always
+    environment:
+      PORT: 4000
+      DB_HOST: ${DB_HOST}
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SSL: 'true'
+    ports:
+      - '4000:4000'
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: /quicknotes/api
+        awslogs-create-group: 'true'
+    networks:
+      - app-net
+
+  web:
+    image: ${ECR_REGISTRY}/quicknotes-web:${IMAGE_TAG}
+    restart: always
+    environment:
+      PORT: 3000
+      API_URL: http://api:4000
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: /quicknotes/web
+        awslogs-create-group: 'true'
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    driver: bridge
