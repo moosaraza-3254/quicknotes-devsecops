@@ -343,6 +343,13 @@ jobs:
           done
           curl -fsS "http://${ALB_DNS}/health"
           echo ""
+          for i in $(seq 1 18); do
+            if curl -fsS "http://${ALB_DNS}/api/health" > /dev/null 2>&1; then
+              echo "API healthy via ALB after $((i * 5))s"
+              break
+            fi
+            sleep 5
+          done
           curl -fsS "http://${ALB_DNS}/api/health"
           echo ""
           curl -fsS -X POST "http://${ALB_DNS}/api/notes" \
