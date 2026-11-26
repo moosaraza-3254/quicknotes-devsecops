@@ -1,4 +1,4 @@
-name: CI Pipeline (Stages 1-10)
+name: CI/CD Pipeline (Stages 1-12)
 
 on:
   pull_request:
@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  id-token: write
 
 jobs:
   secret-scan:
@@ -207,3 +208,139 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           severity: HIGH,CRITICAL
+
+  deploy-aws:
+    name: Stage 11 & 12 - ECR Push & SSM Deploy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [sonarcloud, snyk-scan, docker-build-and-scan]
+    steps:
+      - name: Stage 1 - Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Stage 11 - Build and push quicknotes-api to ECR
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/quicknotes-api:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/quicknotes-api:latest
+
+      - name: Stage 11 - Build and push quicknotes-web to ECR
+        uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/quicknotes-web:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/quicknotes-web:latest
+
+      - name: Stage 12 - Deploy containers to EC2 via AWS SSM
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          API_URL: ${{ secrets.API_URL }}
+        run: |
+          cat << 'SCRIPT' > deploy_ssm.py
+          import json, os, subprocess, time
+          from urllib.parse import urlparse
+
+          db = urlparse(os.environ["DATABASE_URL"])
+          registry = os.environ["REGISTRY"]
+          tag = os.environ["IMAGE_TAG"]
+          region = os.environ["AWS_REGION"]
+          instance_id = os.environ["EC2_INSTANCE_ID"]
+          api_url = os.environ["API_URL"]
+
+          commands = [
+              "set -e",
+              f"aws ecr get-login-password --region {region} | docker login --username AWS --password-stdin {registry}",
+              f"docker pull {registry}/quicknotes-api:{tag}",
+              f"docker pull {registry}/quicknotes-web:{tag}",
+              "docker rm -f quicknotes-api quicknotes-web || true",
+              (
+                  f"docker run -d --name quicknotes-api --restart unless-stopped -p 3000:3000 "
+                  f"-e PORT=3000 "
+                  f"-e DB_HOST={db.hostname} "
+                  f"-e DB_PORT={db.port or 5432} "
+                  f"-e DB_NAME={db.path.lstrip('/')} "
+                  f"-e DB_USER={db.username} "
+                  f"-e DB_PASSWORD={db.password} "
+                  f"-e DB_SSL=true "
+                  f"{registry}/quicknotes-api:{tag}"
+              ),
+              (
+                  f"docker run -d --name quicknotes-web --restart unless-stopped -p 8080:8080 "
+                  f"-e PORT=8080 "
+                  f"-e API_URL={api_url} "
+                  f"{registry}/quicknotes-web:{tag}"
+              ),
+              "sleep 5",
+              "docker ps"
+          ]
+
+          payload = json.dumps({"commands": commands})
+          cmd_id = subprocess.check_output([
+              "aws", "ssm", "send-command",
+              "--instance-ids", instance_id,
+              "--document-name", "AWS-RunShellScript",
+              "--parameters", payload,
+              "--query", "Command.CommandId",
+              "--output", "text"
+          ]).decode().strip()
+
+          print(f"Dispatched SSM Command ID: {cmd_id}")
+          for _ in range(30):
+              time.sleep(5)
+              res = json.loads(subprocess.check_output([
+                  "aws", "ssm", "get-command-invocation",
+                  "--command-id", cmd_id,
+                  "--instance-id", instance_id
+              ]).decode())
+              status = res["Status"]
+              print(f"SSM Status: {status}")
+              if status == "Success":
+                  print(res.get("StandardOutputContent", ""))
+                  break
+              if status in ("Failed", "Cancelled", "TimedOut"):
+                  print(res.get("StandardErrorContent", ""))
+                  raise SystemExit(1)
+          else:
+              raise SystemExit("Timed out waiting for SSM deployment")
+          SCRIPT
+          python3 deploy_ssm.py
+
+      - name: Stage 12 - Live ALB Smoke Tests
+        env:
+          ALB_DNS: ${{ secrets.ALB_DNS }}
+        run: |
+          set -e
+          echo "Waiting 15s for ALB target health checks..."
+          sleep 15
+          curl -fsS "http://${ALB_DNS}/health"
+          echo ""
+          curl -fsS "http://${ALB_DNS}/api/health"
+          echo ""
+          curl -fsS -X POST "http://${ALB_DNS}/api/notes" \
+            -H "Content-Type: application/json" \
+            -d '{"title":"DevSecOps Smoke Test","content":"Deployed via OIDC + SSM"}'
+          echo ""
+          curl -fsS "http://${ALB_DNS}/api/notes"
+          echo ""
